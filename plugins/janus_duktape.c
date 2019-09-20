@@ -449,6 +449,31 @@ static duk_ret_t janus_duktape_method_readfile(duk_context *ctx) {
 	return 1;
 }
 
+static duk_ret_t janus_duktape_method_writefile(duk_context *ctx) {
+    /* Helper method to write to a text file  */
+    if(duk_get_type(ctx, 0) != DUK_TYPE_STRING) {
+        duk_push_error_object(ctx, DUK_RET_TYPE_ERROR, "Invalid argument (expected %s, got %s)\n",
+            janus_duktape_type_string(DUK_TYPE_STRING), janus_duktape_type_string(duk_get_type(ctx, 0)));
+        return duk_throw(ctx);
+    }
+    if(duk_get_type(ctx, 1) != DUK_TYPE_STRING && duk_get_type(ctx, 1) != DUK_TYPE_UNDEFINED) {
+        duk_push_error_object(ctx, DUK_RET_TYPE_ERROR, "Invalid argument (expected %s, got %s)\n",
+            janus_duktape_type_string(DUK_TYPE_STRING), janus_duktape_type_string(duk_get_type(ctx, 1)));
+        return duk_throw(ctx);
+    }
+    const char *filename = duk_get_string(ctx, 0);
+    const char *text = duk_get_string(ctx, 1);
+    FILE *f = fopen(filename, "a");
+    if(f == NULL) {
+        duk_push_error_object(ctx, DUK_ERR_ERROR, "Error opening file for writing: %s\n", filename);
+        return duk_throw(ctx);
+    }
+    fprintf(f, "%s", text);
+    fclose(f);
+
+    return 1;
+}
+
 static duk_ret_t janus_duktape_method_pokescheduler(duk_context *ctx) {
 	/* This method allows the JavaScript script to poke the scheduler and have it wake up ASAP */
 	g_async_queue_push(events, GUINT_TO_POINTER(janus_duktape_event_resume));
@@ -1278,6 +1303,8 @@ int janus_duktape_init(janus_callbacks *callback, const char *config_path) {
 	duk_put_global_string(duktape_ctx, "getModulesFolder");
 	duk_push_c_function(duktape_ctx, janus_duktape_method_readfile, 1);
 	duk_put_global_string(duktape_ctx, "readFile");
+	duk_push_c_function(duktape_ctx, janus_duktape_method_writefile, 2);
+	duk_put_global_string(duktape_ctx, "writeFile");
 	duk_push_c_function(duktape_ctx, janus_duktape_method_pokescheduler, 0);
 	duk_put_global_string(duktape_ctx, "pokeScheduler");
 	duk_push_c_function(duktape_ctx, janus_duktape_method_timecallback, 3);

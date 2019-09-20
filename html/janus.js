@@ -1443,7 +1443,8 @@ function Janus(gatewayCallbacks) {
 					Janus.log("Sending pending messages on <" + label + ">:", config.dataChannel[label].pending.length);
 					for(var i in config.dataChannel[label].pending) {
 						var text = config.dataChannel[label].pending[i];
-						Janus.log("Sending string on data channel <" + label + ">: " + text);
+						var logInfo = (text.length > 1500) ? " length: " + text.length : ": " + text;
+						Janus.log("Sending string on data channel <" + label + ">" + logInfo);
 						config.dataChannel[label].send(text);
 					}
 					config.dataChannel[label].pending = [];
@@ -1458,7 +1459,7 @@ function Janus(gatewayCallbacks) {
 		}
 		if(!incoming) {
 			// FIXME Add options (ordered, maxRetransmits, etc.)
-			config.dataChannel[dclabel] = config.pc.createDataChannel(dclabel, {ordered:false});
+			config.dataChannel[dclabel] = config.pc.createDataChannel(dclabel, {ordered:true});
 		} else {
 			// The channel was created by Janus
 			config.dataChannel[dclabel] = incoming;
@@ -1503,7 +1504,8 @@ function Janus(gatewayCallbacks) {
 			callbacks.success();
 			return;
 		}
-		Janus.log("Sending string on data channel <" + label + ">: " + text);
+		var logInfo = (text.length > 1500) ? " length: " + text.length : ": " + text;
+		Janus.log("Sending string on data channel <" + label + ">" + logInfo);
 		config.dataChannel[label].send(text);
 		callbacks.success();
 	}

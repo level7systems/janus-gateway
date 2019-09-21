@@ -246,6 +246,21 @@ var fileUpload = {
             message: body,
             success: function() {
                 Janus.debug("Sending message success, proceed with file upload...");
+
+                me.plugin.webrtcStuff.dataChannel.JanusDataChannel.onbufferedamountlow = function() {
+                    if (BYTES_PER_CHUNK * currentChunk < file.size ) {
+                        
+                        var progress =  Math.ceil(currentChunk / chunksCount * 100);
+                        $('#progress').text(progress + '% uploaded...');
+
+                        me.readNextChunk(file, currentChunk);
+                    } else {
+                        Janus.debug('All chunks sent');
+                        $('#progress').text('100% Completed');
+                        $('#uploadButton').attr('disabled', false);
+                        $('#files').attr('disabled', false);
+                    }
+                };
                 
                 me.fileReader = new FileReader();
 
@@ -253,23 +268,8 @@ var fileUpload = {
                     me.plugin.data({
                         text: me.arrayBufferToBase64(me.fileReader.result),
                         success: function() {
-
                             currentChunk++;
-
-                            console.log('-- uploaded chunk ' + currentChunk + ' of ' + chunksCount );
-                            
-                            if (BYTES_PER_CHUNK * currentChunk < file.size ) {
-                                
-                                var progress =  Math.ceil(currentChunk / chunksCount * 100);
-                                $('#progress').text(progress + '% uploaded...');
-
-                                me.readNextChunk(file, currentChunk);
-                            } else {
-                                Janus.debug('All chunks sent');
-                                $('#progress').text('100% Completed');
-                                $('#uploadButton').attr('disabled', false);
-                                $('#files').attr('disabled', false);
-                            }
+                            console.log('-- uploaded chunk ' + currentChunk + ' of ' + chunksCount);
                         },
                         error: function(reason) {
                             bootbox.alert(reason);
@@ -279,7 +279,6 @@ var fileUpload = {
                 };
 
                 me.readNextChunk(file, currentChunk);
-                
             },
             error: function(error) {
                 Janus.debug('Filed transfer failed');

@@ -267,6 +267,8 @@ var fileUpload = {
                 me.fileReader.onload = function() {
                     me.plugin.data({
                         text: me.arrayBufferToBase64(me.fileReader.result),
+                        // REVIEW: later on when Janus will handle binary data sent over Data Channel we will just do:
+                        // text: me.fileReader.result,
                         success: function() {
                             currentChunk++;
                             console.log('-- uploaded chunk ' + currentChunk + ' of ' + chunksCount);

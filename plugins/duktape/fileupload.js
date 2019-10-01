@@ -164,6 +164,11 @@ var fileUpload = {
                 return;
             }
 
+            if (!session.chunks) {
+                console.error("Chunks not set yet for ["+id+"], unable to handle incming data");
+                return;
+            }
+
             if (session.chunkCount) {
                 session.chunkCount++;
             } else {
@@ -174,6 +179,11 @@ var fileUpload = {
             writeFile(filename, buf);
 
             console.log('saved data of chunk ['+session.chunkCount+'] for session id ['+id+'] len: ['+len+']');
+
+            if (session.chunkCount === session.chunks) {
+                console.log('File upload completed');
+                pushEvent(id, null, JSON.stringify({ info: "File upload completed", result: 'completed' }));
+            }
 
         } else {
             console.error("Don't know how to handle incoming data for session type ["+session.type+"] Id ["+id+"]");
@@ -288,7 +298,7 @@ var fileUpload = {
                 result: "error"
             };
 
-        if (msg.filename) {
+        if (msg.filename && msg.chunks) {
             /* eslint-disable-next-line */
             if (!/^[a-zA-Z0-9\.\-\_\s]+$/g.test(msg.filename)) {
                 me.sessions[session.id]['filename'] = null;
@@ -297,13 +307,21 @@ var fileUpload = {
                 return response;
             }
 
+            if (!/^[1-9][0-9]{0,20}$/.test(msg.chunks)) {
+                me.sessions[session.id]['chunks'] = null;
+                response.info = "Invalid chunks ["+msg.chunks+"]";
+                console.error(response.info);
+                return response;
+            }
+
             me.sessions[session.id]['filename'] = msg.filename;
-            return { info: "Filename set to " + msg.filename, result: "ok" };
-        } else {
-            response.info = "Don't know how to handle fileupload message ["+JSON.stringify(msg)+"]";
-            console.error(response.info);
-            return response;
+            me.sessions[session.id]['chunks'] = parseInt(msg.chunks);
+            return { info: "File [" + msg.filename + '] to be received in [' + msg.chunks + '] chunks', result: "ok" };
         }
+
+        response.info = "Don't know how to handle fileupload message ["+JSON.stringify(msg)+"]";
+        console.error(response.info);
+        return response;
     },
     destroy: function() {
         // This is where we deinitialize the plugin, when Janus shuts down

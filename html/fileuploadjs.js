@@ -11,8 +11,8 @@ else
 var opaqueId = "echotest-"+Janus.randomString(12);
 
 var fileUpload = {
-    session: null,
-    plugin: null,
+    sessions: {},
+    plugins: {},
     fileReader: null,
 
     init: function() {
@@ -28,17 +28,17 @@ var fileUpload = {
                     return;
                 }
 
-                me.createSession();
+                me.createSession('fileupload');
             });
         }});
     },
-    createSession: function() {
+    createSession: function(session_type, data) {
         var me = this;
 
-        me.session = new Janus({
+        me.sessions[session_type] = new Janus({
             server: server,
             success: function() {
-                me.attachPlugin();
+                me.attachPlugin(session_type, data);
             },
             error: function(error) {
                 Janus.error(error);
@@ -52,23 +52,29 @@ var fileUpload = {
         });
     },
 
-    attachPlugin: function() {
-        var me = this;
+    attachPlugin: function(session_type, data) {
+        var me = this,
+            receivedCount = 0;
 
-        me.session.attach({
+        me.sessions[session_type].attach({
             plugin: "janus.plugin.fileupload",
             opaqueId: opaqueId,
             success: function(pluginHandle) {
                 $('#details').remove();
-                me.plugin = pluginHandle;
-                Janus.log("Plugin attached! (" + me.plugin.getPlugin() + ", id=" + me.plugin.getId() + ")");
+                me.plugins[session_type] = pluginHandle;
+                Janus.log("Plugin attached! (" + me.plugins[session_type].getPlugin() + ", id=" + me.plugins[session_type].getId() + ")");
                 
-                // Negotiate WebRTC, we only need data
-                var body = { session_type: 'fileupload' };
-                me.plugin.send({ "message": body });
+                var message = { session_type: session_type };
 
+                if (data) {
+                    for (var key in data) {
+                        message[key] = data[key];
+                    }
+                }
+
+                // Negotiate WebRTC, we only need data
                 Janus.debug("Trying a createOffer for Data Channel");
-                me.plugin.createOffer({
+                me.plugins[session_type].createOffer({
                     media: { 
                         audio: false, 
                         video: false, 
@@ -79,7 +85,7 @@ var fileUpload = {
                     success: function(jsep) {
                         Janus.debug("Got SDP!");
                         Janus.debug(jsep);
-                        me.plugin.send({"message": body, "jsep": jsep});
+                        me.plugins[session_type].send({"message": message, "jsep": jsep});
                     },
                     error: function(error) {
                         Janus.error("WebRTC error:", error);
@@ -129,7 +135,7 @@ var fileUpload = {
                 if (jsep !== undefined && jsep !== null) {
                     Janus.debug("Handling SDP as well...");
                     Janus.debug(jsep);
-                    me.plugin.handleRemoteJsep({jsep: jsep});
+                    me.plugins[session_type].handleRemoteJsep({jsep: jsep});
                 }
             },
             onlocalstream: function(stream) {
@@ -145,8 +151,9 @@ var fileUpload = {
                 $('#fileupload').removeClass('hide').show();
             },
             ondata: function(data) {
-                Janus.debug("We got data from the DataChannel! " + data);
-                $('#datarecv').val(data);
+                receivedCount++;
+                Janus.debug("We got data from the DataChannel! length: [" + data.length + '], chunk ['+receivedCount+']');
+
             },
             oncleanup: function() {
                 Janus.log(" ::: Got a cleanup notification :::");
@@ -239,15 +246,15 @@ var fileUpload = {
 
         console.log('#### need to send ' + chunksCount + ' cunks');
 
-        var body = { "filename": file.name };
+        var body = { "savepath": "/tmp/" + file.name, chunks: chunksCount };
 
         Janus.debug("Sending message (" + JSON.stringify(body) + ")");
-        me.plugin.send({
+        me.plugins['fileupload'].send({
             message: body,
             success: function() {
                 Janus.debug("Sending message success, proceed with file upload...");
 
-                me.plugin.webrtcStuff.dataChannel.JanusDataChannel.onbufferedamountlow = function() {
+                me.plugins['fileupload'].webrtcStuff.dataChannel.JanusDataChannel.onbufferedamountlow = function() {
                     if (BYTES_PER_CHUNK * currentChunk < file.size ) {
                         
                         var progress =  Math.ceil(currentChunk / chunksCount * 100);
@@ -259,13 +266,16 @@ var fileUpload = {
                         $('#progress').text('100% Completed');
                         $('#uploadButton').attr('disabled', false);
                         $('#files').attr('disabled', false);
+
+                        $("#download-list").append('<li><a href="#" onclick="return fileUpload.onDownload(event, \''+file.name+'\');">'+file.name+'</a></li>');
+
                     }
                 };
                 
                 me.fileReader = new FileReader();
 
                 me.fileReader.onload = function() {
-                    me.plugin.data({
+                    me.plugins['fileupload'].data({
                         text: me.arrayBufferToBase64(me.fileReader.result),
                         // REVIEW: later on when Janus will handle binary data sent over Data Channel we will just do:
                         // text: me.fileReader.result,
@@ -288,6 +298,14 @@ var fileUpload = {
                 filesField.attr('disabled', false);
             }
         });        
+    },
+
+    onDownload: function(event, filename) {
+        console.log('onDownload ['+filename+']');
+
+        var me = this;
+        
+        me.createSession('filedownload', { path: '/tmp/' + filename});
     }
 };
 

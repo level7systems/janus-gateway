@@ -1,7 +1,7 @@
 // This is a simple example of an file upload application built in JavaScript,
 // and conceived to be used in conjunction with the janus_duktape.c plugin.
 
-/*global getModulesFolder Duktape readFile writeFile pushEvent notifyEvent configureMedium pokeScheduler getDuktapeVersion addRecipient removeRecipient */
+/*global getModulesFolder Duktape readFile readFileChunk writeFile pushEvent notifyEvent configureMedium pokeScheduler getDuktapeVersion relayData removeRecipient */
 /*eslint no-undef: "error"*/
 
 // Example details
@@ -125,9 +125,61 @@ var fileUpload = {
     },
     setupMedia: function(id) {
         // WebRTC is now available
+        var me = this,
+            session = me.sessions[id];
+
+        if (!session) {
+            console.error("Unable to handle setupMedia for ["+id+"] as sesson is not set");
+            return;
+        }
+
         console.log("WebRTC PeerConnection is up for session:", id);
-        // Attach the session's stream to itself (echo test)
-        addRecipient(id, id);
+
+        //addRecipient(id, id);
+        if (session.type == 'filedownload') {
+            
+            if (!session.path) {
+                pushEvent(id, null, JSON.stringify({ info: "Path not set, unable to read file", result: 'error' }));
+                return;
+            }
+
+            var offset = 0,
+                len = 64000, // chunk size
+                keepSending = true,
+                abortAfter = 999999999, // safeguard against infinite loop
+                i = 0;
+
+            while (keepSending) {
+
+                offset = len * i;
+
+                if (i > abortAfter) {
+                    console.error("Aborting as 50000 iternations reached");
+                    keepSending = false;
+                    break;
+                }
+
+                var buf = readFileChunk(session.path, offset, len);
+
+                if (buf === -1) {
+                    console.error("readFileChunk returned no data");
+                    return;
+                }
+
+                relayData(id, buf, buf.length);
+
+                console.log("relayData sent chunk ["+(i+1)+"], size ["+buf.length+"] bytes to session ["+id+"]");
+
+                if (buf.length < len) {
+                    console.log("readFileChunk returned last chunk size ["+buf.length+"] bytes, transfer completed");
+                    break;
+                }
+
+                i++;
+            }
+
+            //pushEvent(id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
+        }
     },
     hangupMedia: function(id) {
         var me = this;
@@ -159,8 +211,8 @@ var fileUpload = {
         }
 
         if (session.type == 'fileupload') {
-            if (!session.filename) {
-                console.error("Filename not set yet for ["+id+"], unable to handle incming data");
+            if (!session.savepath) {
+                console.error("Save path not set yet for ["+id+"], unable to handle incoming data");
                 return;
             }
 
@@ -175,8 +227,7 @@ var fileUpload = {
                 session.chunkCount = 1;
             }
 
-            var filename = "/tmp/" + session.filename + '.base64';
-            writeFile(filename, buf);
+            writeFile(session.savepath, buf);
 
             console.log('saved data of chunk ['+session.chunkCount+'] for session id ['+id+'] len: ['+len+']');
 
@@ -270,6 +321,14 @@ var fileUpload = {
                 configureMedium(id, "data", "in", true);
                 configureMedium(id, "data", "out", true);
                 return { info: "Session type set to " + msg.session_type, result: "ok" };
+            } else if (msg.session_type == 'filedownload') {
+                me.sessions[id]['type'] = 'filedownload';
+                if (msg.path) {
+                    me.sessions[id]['path'] = msg.path;
+                }
+                //configureMedium(id, "data", "in", false);
+                configureMedium(id, "data", "out", true);
+                return { info: "Session type set to " + msg.session_type, result: "ok" };
             } else {
                 response.info = "Unable to set Session Type to ["+msg.session_type+"]";
                 console.error(response.info);
@@ -284,6 +343,8 @@ var fileUpload = {
 
             if (session.type == 'fileupload') {
                 return me.handleFileupload(session, msg);
+            } else if (session.type == 'filedownload') {
+                return me.handleFiledownload(session, msg);
             } else {
                 response.info = "Don't know how to handle session.type ["+session.type+"]";
                 console.error(response.info);
@@ -293,19 +354,18 @@ var fileUpload = {
     },
     handleFileupload: function(session, msg) {
         var me = this,
+            info = [],
             response = {
                 info: "Fileupload unknown Error",
                 result: "error"
             };
 
-        if (msg.filename && msg.chunks) {
-            /* eslint-disable-next-line */
-            if (!/^[a-zA-Z0-9\.\-\_\s]+$/g.test(msg.filename)) {
-                me.sessions[session.id]['filename'] = null;
-                response.info = "Invalid filename ["+msg.filename+"]";
-                console.error(response.info);
-                return response;
-            }
+        if (msg.savepath) {
+            me.sessions[session.id]['savepath'] = msg.savepath;
+            info.push("Save path set to [" + msg.savepath + ']');
+        }
+
+        if (msg.chunks) {
 
             if (!/^[1-9][0-9]{0,20}$/.test(msg.chunks)) {
                 me.sessions[session.id]['chunks'] = null;
@@ -314,14 +374,40 @@ var fileUpload = {
                 return response;
             }
 
-            me.sessions[session.id]['filename'] = msg.filename;
             me.sessions[session.id]['chunks'] = parseInt(msg.chunks);
-            return { info: "File [" + msg.filename + '] to be received in [' + msg.chunks + '] chunks', result: "ok" };
+            info.push("File to be received in [" + msg.chunks + "] chunks");
+        }
+
+        if (info.length) {
+            return { info: info.join(", "), result: "ok" };
         }
 
         response.info = "Don't know how to handle fileupload message ["+JSON.stringify(msg)+"]";
         console.error(response.info);
         return response;
+    },
+    handleFiledownload: function(session, msg) {
+        var me = this,
+            response = {
+                info: "Filedownload unknown Error",
+                result: "error"
+            };
+
+        if (msg.path) {
+            me.sessions[session.id]['path'] = msg.path;
+            return { info: "Download path set to [" + msg.path + ']', result: "ok" };
+        }
+
+        response.info = "Don't know how to handle filedownload message ["+JSON.stringify(msg)+"]";
+        console.error(response.info);
+        return response;
+    },
+    slowLink: function(p1, p2, p3) {
+        console.log("#### SLOW LINK ###");
+        console.log(p1);
+        console.log(p2);
+        console.log(p3);
+        console.log("####################");
     },
     destroy: function() {
         // This is where we deinitialize the plugin, when Janus shuts down
@@ -377,6 +463,9 @@ function hangupMedia(id) {
 }
 function incomingData(id, buf, len) { // eslint-disable-line no-unused-vars
     fileUpload.incomingData(id, buf, len);
+}
+function slowLink(p1, p2, p3) { // eslint-disable-line no-unused-vars
+    fileUpload.slowLink(p1, p2, p3);
 }
 function resumeScheduler() { // eslint-disable-line no-unused-vars
     fileUpload.resumeScheduler();

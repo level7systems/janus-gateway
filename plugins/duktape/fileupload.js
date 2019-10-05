@@ -123,6 +123,31 @@ var fileUpload = {
         console.log("Got admin message:", message);
         return message;
     },
+    sendChunk: function(session) {
+
+        if (session.send_status == 'completed') {
+            return;
+        }
+
+        session.offset = session.len * session.chunk;
+
+        console.log("readFileChunk session.offset ["+session.offset+"], session.len ["+session.len+"]");
+
+        var buf = readFileChunk(session.path, session.offset, session.len);
+
+        if (buf === -1) {
+            session.send_status = 'completed';
+            console.log("readFileChunk returned no data");
+            pushEvent(session.id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
+            return;
+        }
+
+        relayData(session.id, buf, buf.length);
+
+        session.chunk++;
+
+        console.log("sendChunk ["+session.chunk+"] completed");
+    },
     setupMedia: function(id) {
         // WebRTC is now available
         var me = this,
@@ -135,7 +160,6 @@ var fileUpload = {
 
         console.log("WebRTC PeerConnection is up for session:", id);
 
-        //addRecipient(id, id);
         if (session.type == 'filedownload') {
             
             if (!session.path) {
@@ -143,42 +167,14 @@ var fileUpload = {
                 return;
             }
 
-            var offset = 0,
-                len = 64000, // chunk size
-                keepSending = true,
-                abortAfter = 999999999, // safeguard against infinite loop
-                i = 0;
+            session.send_status = 'sending';
+            session.len = 64000;
+            session.offset = 0;
+            session.chunk = 0;
 
-            while (keepSending) {
+            // send first chunk, next ones will be sent once we get ACK from the client
+            me.sendChunk(session);
 
-                offset = len * i;
-
-                if (i > abortAfter) {
-                    console.error("Aborting as 50000 iternations reached");
-                    keepSending = false;
-                    break;
-                }
-
-                var buf = readFileChunk(session.path, offset, len);
-
-                if (buf === -1) {
-                    console.error("readFileChunk returned no data");
-                    return;
-                }
-
-                relayData(id, buf, buf.length);
-
-                console.log("relayData sent chunk ["+(i+1)+"], size ["+buf.length+"] bytes to session ["+id+"]");
-
-                if (buf.length < len) {
-                    console.log("readFileChunk returned last chunk size ["+buf.length+"] bytes, transfer completed");
-                    break;
-                }
-
-                i++;
-            }
-
-            //pushEvent(id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
         }
     },
     hangupMedia: function(id) {
@@ -236,6 +232,12 @@ var fileUpload = {
                 pushEvent(id, null, JSON.stringify({ info: "File upload completed", result: 'completed' }));
             }
 
+        } else if (session.type == 'filedownload') {
+            console.log('##### DATA ['+buf+']');
+            console.log('Session chunk: ' + session.chunk);
+            if (buf == 'ack-' + (session.chunk - 1)) {
+                me.sendChunk(session);
+            }
         } else {
             console.error("Don't know how to handle incoming data for session type ["+session.type+"] Id ["+id+"]");
             return;
@@ -326,7 +328,7 @@ var fileUpload = {
                 if (msg.path) {
                     me.sessions[id]['path'] = msg.path;
                 }
-                //configureMedium(id, "data", "in", false);
+                configureMedium(id, "data", "in", true);
                 configureMedium(id, "data", "out", true);
                 return { info: "Session type set to " + msg.session_type, result: "ok" };
             } else {

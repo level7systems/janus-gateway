@@ -54,6 +54,7 @@ var fileUpload = {
 
     attachPlugin: function(session_type, data) {
         var me = this,
+            base64 = '',
             receivedCount = 0;
 
         me.sessions[session_type].attach({
@@ -137,6 +138,13 @@ var fileUpload = {
                     Janus.debug(jsep);
                     me.plugins[session_type].handleRemoteJsep({jsep: jsep});
                 }
+
+                if (session_type == 'filedownload' && msg.result == 'completed') {
+                    var fileName = 'test.txt';
+                    var mimeType = 'application/octet-stream';
+                    var blob = me.b64toBlob(base64, mimeType);
+                    saveAs(blob, fileName);
+                }
             },
             onlocalstream: function(stream) {
                 Janus.debug(" ::: Got a local stream :::");
@@ -151,8 +159,24 @@ var fileUpload = {
                 $('#fileupload').removeClass('hide').show();
             },
             ondata: function(data) {
-                receivedCount++;
                 Janus.debug("We got data from the DataChannel! length: [" + data.length + '], chunk ['+receivedCount+']');
+
+                if (session_type == 'filedownload') {
+                    base64+= data;
+                    me.plugins['filedownload'].data({
+                        text: 'ack-' + receivedCount,
+                        success: function() {
+
+                        },
+                        error: function(reason) {
+                            bootbox.alert(reason);
+                            Janus.debug('Filed to send chunk ['+reason+']: ' + reason);
+                        }
+                    });
+
+                    
+                }
+                receivedCount++;
 
             },
             oncleanup: function() {
@@ -166,6 +190,31 @@ var fileUpload = {
         var start = BYTES_PER_CHUNK * currentChunk;
         var end = Math.min( file.size, start + BYTES_PER_CHUNK );
         me.fileReader.readAsArrayBuffer( file.slice( start, end ) );
+    },
+
+    b64toBlob: function(b64Data, contentType, sliceSize) {
+        contentType = contentType || '';
+        sliceSize = sliceSize || 512;
+
+        var byteCharacters = atob(b64Data);
+        var byteArrays = [];
+
+        for (var offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+            var slice = byteCharacters.slice(offset, offset + sliceSize);
+
+            var byteNumbers = new Array(slice.length);
+            for (var i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+
+            var byteArray = new Uint8Array(byteNumbers);
+
+            byteArrays.push(byteArray);
+        }
+
+        var blob = new Blob(byteArrays, {type: contentType});
+
+        return blob;
     },
 
     arrayBufferToBase64: function(arrayBuffer) {

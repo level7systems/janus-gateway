@@ -54,6 +54,31 @@ static duk_ret_t janus_duktape_extra_sample(duk_context *ctx) {
 /* This is where you can add your custom extra functions */
 
 
+static duk_ret_t janus_duktape_method_filesize(duk_context *ctx) {
+
+    /* Helper method to get file size */
+    if(duk_get_type(ctx, 0) != DUK_TYPE_STRING) {
+        duk_push_error_object(ctx, DUK_RET_TYPE_ERROR, "Invalid argument (expected %s, got %s)\n",
+            janus_duktape_type_string(DUK_TYPE_STRING), janus_duktape_type_string(duk_get_type(ctx, 0)));
+        return duk_throw(ctx);
+    }
+
+    const char *filename = duk_get_string(ctx, 0);
+
+    FILE *f = fopen(filename, "rb");
+    if(f == NULL) {
+        duk_push_error_object(ctx, DUK_ERR_ERROR, "Error opening file: %s\n", filename);
+        return duk_throw(ctx);
+    }
+
+    fseek(f, 0, SEEK_END);
+    size_t fileSize = (size_t)ftell(f);
+    fclose(f);
+
+    duk_push_int(ctx, fileSize);
+    return 1;
+}
+
 static duk_ret_t janus_duktape_method_readfilechunk(duk_context *ctx) {
 
     /* Helper method to read chunk of a text file and return its content as a string */
@@ -138,4 +163,7 @@ void janus_duktape_register_extra_functions(duk_context *ctx) {
 
     duk_push_c_function(ctx, janus_duktape_method_readfilechunk, 3);
     duk_put_global_string(ctx, "readFileChunk");
+
+    duk_push_c_function(ctx, janus_duktape_method_filesize, 1);
+    duk_put_global_string(ctx, "fileSize");
 }

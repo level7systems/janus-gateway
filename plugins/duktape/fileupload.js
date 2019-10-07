@@ -1,11 +1,12 @@
 // This is a simple example of an file upload application built in JavaScript,
 // and conceived to be used in conjunction with the janus_duktape.c plugin.
 
-/*global getModulesFolder Duktape readFile readFileChunk writeFile pushEvent notifyEvent configureMedium pokeScheduler getDuktapeVersion relayData removeRecipient */
+/*global getModulesFolder Duktape readFile readFileChunk writeFile fileSize pushEvent notifyEvent configureMedium pokeScheduler getDuktapeVersion relayData removeRecipient */
 /*eslint no-undef: "error"*/
 
 // Example details
 const name = "fileupload.js";
+const CHUNK_BURST = 4;
 
 // Let's add more info to errors
 Error.prototype.toString = function () {
@@ -123,30 +124,43 @@ var fileUpload = {
         console.log("Got admin message:", message);
         return message;
     },
-    sendChunk: function(session) {
+    sendChunk: function(session, count) {
 
         if (session.send_status == 'completed') {
             return;
         }
 
-        session.offset = session.len * session.chunk;
+        count = (count) ? count : 1;
 
-        console.log("readFileChunk session.offset ["+session.offset+"], session.len ["+session.len+"]");
+        for (var i = 0; i < count; i++) {
 
-        var buf = readFileChunk(session.path, session.offset, session.len);
+            session.offset = session.len * session.chunk;
 
-        if (buf === -1) {
-            session.send_status = 'completed';
-            console.log("readFileChunk returned no data");
-            pushEvent(session.id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
-            return;
+            console.log("["+session.id+"/"+i+"] readFileChunk session.offset ["+session.offset+"], session.len ["+session.len+"], size ["+session.size+"]");
+
+            var buf = readFileChunk(session.path, session.offset, session.len);
+
+            if (buf === -1) {
+                session.send_status = 'completed';
+                console.log("["+session.id+"] readFileChunk returned no data. File download completed");
+                pushEvent(session.id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
+                break;
+            }
+
+            relayData(session.id, buf, buf.length);
+
+            session.chunk++;
+            session.send_size+= buf.length;
+
+            console.log("["+session.id+"] sendChunk ["+session.chunk+"] len ["+buf.length+"] completed");
+
+            if (session.send_size >= session.size) {
+                session.send_status = 'completed';
+                console.log("["+session.id+"] already sent ["+session.send_size+"] of ["+session.size+"] bytes. File download completed");
+                pushEvent(session.id, null, JSON.stringify({ info: "File download completed", result: 'completed' }));
+                break;
+            }
         }
-
-        relayData(session.id, buf, buf.length);
-
-        session.chunk++;
-
-        console.log("sendChunk ["+session.chunk+"] completed");
     },
     setupMedia: function(id) {
         // WebRTC is now available
@@ -167,13 +181,15 @@ var fileUpload = {
                 return;
             }
 
+            if (!session.size) {
+                pushEvent(id, null, JSON.stringify({ info: "Size not set, unable to read file", result: 'error' }));
+                return;
+            }
+
             session.send_status = 'sending';
-            session.len = 64000;
-            session.offset = 0;
-            session.chunk = 0;
 
             // send first chunk, next ones will be sent once we get ACK from the client
-            me.sendChunk(session);
+            me.sendChunk(session, CHUNK_BURST);
 
         }
     },
@@ -235,8 +251,8 @@ var fileUpload = {
         } else if (session.type == 'filedownload') {
             console.log('##### DATA ['+buf+']');
             console.log('Session chunk: ' + session.chunk);
-            if (buf == 'ack-' + (session.chunk - 1)) {
-                me.sendChunk(session);
+            if (buf == 'ack-' + session.chunk) {
+                me.sendChunk(session, CHUNK_BURST);
             }
         } else {
             console.error("Don't know how to handle incoming data for session type ["+session.type+"] Id ["+id+"]");
@@ -276,9 +292,9 @@ var fileUpload = {
         var answer = sdpUtils.generateAnswer(offer, { audio: true, video: true, data: true });
         console.log("Generated answer:", answer);
         console.log("Processing request:", msg);
-        me.processRequest(id, msg);
+        var data = me.processRequest(id, msg);
         console.log("Pushing event:");
-        var event = { filetransfer: "event", result: "ok" };
+        var event = { filetransfer: "event", result: "ok", data: data };
         console.log("  --", event);
         var jsepanswer = { type: "answer", sdp: sdpUtils.render(answer) };
         console.log("  --", jsepanswer);
@@ -311,47 +327,47 @@ var fileUpload = {
 
         console.log('processRequest ['+id+'], ' + JSON.stringify(msg));
 
-        if (msg.session_type) {
-            if (session.type) {
-                response.info = "Session type is already set. Unable to change.";
+        if (msg.session_type && session.type) {
+            response.info = "Session type is already set. Unable to change.";
+            console.error(response.info);
+            return response;
+        }
+
+        if (msg.session_type && !session.type) {
+            if ([ 'fileupload', 'filedownload' ].indexOf(msg.session_type) == -1) {
+                response.info = "Invalid session type ["+msg.session_type+"].";
                 console.error(response.info);
                 return response;
             }
+
+            me.sessions[id]['type'] = msg.session_type;
 
             if (msg.session_type == 'fileupload') {
                 me.sessions[id]['type'] = 'fileupload';
                 configureMedium(id, "data", "in", true);
                 configureMedium(id, "data", "out", true);
-                return { info: "Session type set to " + msg.session_type, result: "ok" };
-            } else if (msg.session_type == 'filedownload') {
-                me.sessions[id]['type'] = 'filedownload';
-                if (msg.path) {
-                    me.sessions[id]['path'] = msg.path;
-                }
-                configureMedium(id, "data", "in", true);
-                configureMedium(id, "data", "out", true);
-                return { info: "Session type set to " + msg.session_type, result: "ok" };
-            } else {
-                response.info = "Unable to set Session Type to ["+msg.session_type+"]";
-                console.error(response.info);
-                return response;
-            }
-        } else {
-            if (!session.type) {
-                response.info = "Please set session_type before sending further requests";
-                console.error(response.info);
-                return response;
             }
 
-            if (session.type == 'fileupload') {
-                return me.handleFileupload(session, msg);
-            } else if (session.type == 'filedownload') {
-                return me.handleFiledownload(session, msg);
-            } else {
-                response.info = "Don't know how to handle session.type ["+session.type+"]";
-                console.error(response.info);
-                return response;
+            if (msg.session_type == 'filedownload') {
+                configureMedium(id, "data", "in", true);
+                configureMedium(id, "data", "out", true);
             }
+        }
+
+        if (!msg.session_type && !session.type) {
+            response.info = "Please set session_type before sending further requests";
+            console.error(response.info);
+            return response;
+        }
+
+        if (session.type == 'fileupload') {
+            return me.handleFileupload(session, msg);
+        } else if (session.type == 'filedownload') {
+            return me.handleFiledownload(session, msg);
+        } else {
+            response.info = "Don't know how to handle session.type ["+session.type+"]";
+            console.error(response.info);
+            return response;
         }
     },
     handleFileupload: function(session, msg) {
@@ -396,8 +412,18 @@ var fileUpload = {
             };
 
         if (msg.path) {
-            me.sessions[session.id]['path'] = msg.path;
-            return { info: "Download path set to [" + msg.path + ']', result: "ok" };
+            var size = fileSize(msg.path);
+
+            session.path = msg.path;
+            session.size = size;
+            session.len = 64000;
+            session.offset = 0;
+            session.chunk = 0;
+            session.send_size = 0;
+
+            var chunks = Math.ceil(size/session.len);
+            console.log('Set path to ['+msg.path+'] size ['+size+']');
+            return { info: "Download path set to [" + msg.path + "] size ["+size+"]", size: size, chunks: chunks, result: "ok" };
         }
 
         response.info = "Don't know how to handle filedownload message ["+JSON.stringify(msg)+"]";

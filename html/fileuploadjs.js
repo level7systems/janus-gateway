@@ -1,6 +1,7 @@
 /*global bootbox Janus*/
 /*eslint no-undef: "error"*/
 const BYTES_PER_CHUNK = 48000;
+const CHUNK_BURST = 4;
 
 var server = null;
 if(window.location.protocol === 'http:')
@@ -55,6 +56,8 @@ var fileUpload = {
     attachPlugin: function(session_type, data) {
         var me = this,
             base64 = '',
+            lastAck = 0,
+            chunks = 0,
             receivedCount = 0;
 
         me.sessions[session_type].attach({
@@ -139,11 +142,10 @@ var fileUpload = {
                     me.plugins[session_type].handleRemoteJsep({jsep: jsep});
                 }
 
-                if (session_type == 'filedownload' && msg.result == 'completed') {
-                    var fileName = 'test.txt';
-                    var mimeType = 'application/octet-stream';
-                    var blob = me.b64toBlob(base64, mimeType);
-                    saveAs(blob, fileName);
+                if (session_type == 'filedownload' && msg.data && msg.data.chunks) {
+                    chunks = msg.data.chunks;
+
+                    console.log('Will wait until we receive ['+chunks+'] chunks');
                 }
             },
             onlocalstream: function(stream) {
@@ -159,25 +161,33 @@ var fileUpload = {
                 $('#fileupload').removeClass('hide').show();
             },
             ondata: function(data) {
+
+				receivedCount++;
+
                 Janus.debug("We got data from the DataChannel! length: [" + data.length + '], chunk ['+receivedCount+']');
 
                 if (session_type == 'filedownload') {
                     base64+= data;
-                    me.plugins['filedownload'].data({
-                        text: 'ack-' + receivedCount,
-                        success: function() {
 
-                        },
-                        error: function(reason) {
-                            bootbox.alert(reason);
-                            Janus.debug('Filed to send chunk ['+reason+']: ' + reason);
-                        }
-                    });
+                    if (lastAck == (receivedCount - CHUNK_BURST)) {
+						me.plugins['filedownload'].data({
+							text: 'ack-' + receivedCount,
+							error: function(reason) {
+								bootbox.alert(reason);
+								Janus.debug('Filed to send chunk ['+reason+']: ' + reason);
+							}
+						});
 
-                    
+						lastAck = receivedCount;
+					}
+
+					if (chunks == receivedCount) {
+                        var fileName = 'test.txt';
+                        var mimeType = 'application/octet-stream';
+                        var blob = me.b64toBlob(base64, mimeType);
+                        saveAs(blob, fileName);
+                    }
                 }
-                receivedCount++;
-
             },
             oncleanup: function() {
                 Janus.log(" ::: Got a cleanup notification :::");

@@ -237,6 +237,8 @@ var fileUpload = {
                 session.chunkCount++;
             } else {
                 session.chunkCount = 1;
+                session.lastProgress = 0;
+                session.lastProgressUpdate = new Date().getTime();
             }
 
             writeFile(session.savepath, buf);
@@ -246,6 +248,24 @@ var fileUpload = {
             if (session.chunkCount === session.chunks) {
                 console.log('File upload completed');
                 pushEvent(id, null, JSON.stringify({ info: "File upload completed", result: 'completed' }));
+            } else {
+
+                var now = new Date().getTime(),
+                    diff = now - session.lastProgressUpdate;
+
+                // don't send progress updates more often than every 1 sec.
+                if (diff >= 1000) {
+                    var progress = Math.ceil(session.chunkCount / session.chunks * 100);
+
+                    if (session.lastProgress == progress) {
+                        console.log("#### progress ' + progress + '%, hasn't change since last update, skipping...");
+                    } else {
+                        console.log('#### progress ' + progress + '%, diff: ['+diff+']');
+                        pushEvent(id, null, JSON.stringify({ info: "File upload progress", progress: progress }));
+                    }
+
+                    session.lastProgressUpdate = now;
+                }
             }
 
         } else if (session.type == 'filedownload') {
@@ -360,6 +380,10 @@ var fileUpload = {
             return response;
         }
 
+        if (msg.ping) {
+            return { pong: getTimestamp(),  result: "ok" };
+        }
+
         if (session.type == 'fileupload') {
             return me.handleFileupload(session, msg);
         } else if (session.type == 'filedownload') {
@@ -405,11 +429,10 @@ var fileUpload = {
         return response;
     },
     handleFiledownload: function(session, msg) {
-        var me = this,
-            response = {
-                info: "Filedownload unknown Error",
-                result: "error"
-            };
+        var response = {
+            info: "Filedownload unknown Error",
+            result: "error"
+        };
 
         if (msg.path) {
             var size = fileSize(msg.path);
@@ -497,6 +520,38 @@ function slowLink(p1, p2, p3) { // eslint-disable-line no-unused-vars
 }
 function resumeScheduler() { // eslint-disable-line no-unused-vars
     fileUpload.resumeScheduler();
+}
+
+
+function getTimestamp() {
+
+    var date = new Date();
+    var aaaa = date.getFullYear();
+    var gg = date.getDate();
+    var mm = (date.getMonth() + 1);
+
+    if (gg < 10)
+        gg = "0" + gg;
+
+    if (mm < 10)
+        mm = "0" + mm;
+
+    var cur_date = aaaa + "-" + mm + "-" + gg;
+
+    var hours = date.getHours();
+    var minutes = date.getMinutes();
+    var seconds = date.getSeconds();
+
+    if (hours < 10)
+        hours = "0" + hours;
+
+    if (minutes < 10)
+        minutes = "0" + minutes;
+
+    if (seconds < 10)
+        seconds = "0" + seconds;
+
+    return cur_date + " " + hours + ":" + minutes + ":" + seconds;
 }
 
 // Done
